@@ -23,16 +23,18 @@
 
 fake_manpage()
 {
-	path="$1"
+	local path="$1"
+	local name="${2:-CONTENT}"
+	local desc="${3:-Description}"
 
 	cat <<EOF > "$path"
 .Dd January 1, 1970
-.Dt CONTENT 1
+.Dt $name 1
 .Os
 .Sh NAME
-.Nm CONTENT ,
-.Nm "MAN CONTENT"
-.Nd DESCRIPTION
+.Nm $name ,
+.Nm "MAN $name"
+.Nd $desc
 EOF
 }
 
@@ -107,6 +109,57 @@ custom_mansect_body()
 	# We should find it in a the base section number, too
 	atf_check -o match:"CONTENT" \
 	    env MANPATH="$PWD/man" MANPAGER="cat" man 1z finally
+
+	# Regression tests for rdar://124959653
+	# Don't check for extended section after regular section
+	atf_check -s exit:1 -e match:"for 1p$" \
+	    env MANPATH="$PWD/man" MANPAGER="cat" man 1 1p cmd
+	# Narrow down extended section syntax to /^[0-9][a-z]{1,3}$/
+	atf_check -o match:"CONTENT" -e match:"for 1p1$" \
+	    env MANPATH="$PWD/man" MANPAGER="cat" man 1p1 cmd
+	atf_check -o match:"CONTENT" -e match:"for 1pabc$" \
+	    env MANPATH="$PWD/man" MANPAGER="cat" man 1pabc cmd
+}
+
+atf_test_case whatis
+whatis_body()
+{
+	mkdir -p manA/man1 manB/man8
+	fake_manpage manA/man1/cmd.1 cmd "Command"
+	fake_manpage manA/man1/other.1 other "Other command"
+	echo "cmd(1), MAN cmd(1)     - Command" >manA/whatis
+	echo "other(1), MAN other(1) - Other command" >>manA/whatis
+	fake_manpage manB/man8/cmd.8 cmd "Extra command"
+	fake_manpage manB/man8/stuff.8 stuff "Stuff"
+	atf_check -o save:out1 \
+	    env MANPATH="$PWD/manA:$PWD/manB" MANPAGER="cat" \
+	    man -S1 -k cmd
+	atf_check -o match:1 wc -l <out1
+	atf_check -o match:1 grep -c cmd <out1
+	atf_check -o save:out18 \
+	    env MANPATH="$PWD/manA:$PWD/manB" MANPAGER="cat" \
+	    man -S1:8 -k cmd
+	atf_check -o match:2 wc -l <out18
+	atf_check -o match:2 grep -c cmd <out18
+	atf_check -o save:out8 \
+	    env MANPATH="$PWD/manA:$PWD/manB" MANPAGER="cat" \
+	    man -S8 -k cmd
+	atf_check -o match:1 wc -l <out8
+	atf_check -o match:1 grep -c cmd <out8
+}
+
+atf_test_case so
+so_body()
+{
+	mkdir -p man/man1 man/man8
+	fake_manpage man/man1/cmd.1 cmd "Command"
+	atf_check -o match:"Command" env MANPATH="$PWD/man" man cmd
+	# correct usage
+	echo ".so man1/cmd.1" >man/man8/foo.8
+	atf_check -o match:"Command" env MANPATH="$PWD/man" man foo
+	# incorrect but widespread usage
+	echo ".so cmd.1" >man/man1/bar.1
+	atf_check -o match:"Command" env MANPATH="$PWD/man" man bar
 }
 
 atf_init_test_cases()
@@ -114,4 +167,6 @@ atf_init_test_cases()
 
 	atf_add_test_case spaces
 	atf_add_test_case custom_mansect
+	atf_add_test_case whatis
+	atf_add_test_case so
 }

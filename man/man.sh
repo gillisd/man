@@ -163,6 +163,11 @@ check_man() {
 			# non-standard width
 			unset use_cat
 			decho "    Skipping catpage: non-standard page width"
+#ifdef __APPLE__
+		elif [ -z "$2" ]; then
+			# nothing
+			decho "    Skipping catpage"
+#endif
 		elif exists "$2" && is_newer $found $manpage; then
 			# cat page found and is newer, use that
 			use_cat=yes
@@ -318,7 +323,12 @@ man_check_for_so() {
 		.so*)	trim "${line#.so}"
 			decho "$manpage includes $tstr"
 			# Glob and check for the file.
-			if ! check_man "$path/$tstr" ""; then
+#ifdef __APPLE__
+			if ! check_man "$path/$tstr" "" &&
+			   ! check_man "${manpage%/*}/$tstr" ""; then
+#else
+#			if ! check_man "$path/$tstr" ""; then
+#endif
 				decho "  Unable to find $tstr"
 				return 1
 			fi
@@ -1077,10 +1087,10 @@ search_whatis() {
 		if [ -f "$path/$f" -a -r "$path/$f" ]; then
 			decho "Found whatis: $path/$f"
 #ifdef __APPLE__
-			wlist="$wlist:$path/$f"
+			wlist="$wlist%$path/$f"
 		else
 			decho "Using makewhatis.local: $path"
-			localwlist="$localwlist:$path"
+			localwlist="$localwlist%$path"
 #else
 #			wlist="$wlist $path/$f"
 #endif
@@ -1090,7 +1100,7 @@ search_whatis() {
 			if [ -f "$path/$loc/$f" -a -r "$path/$loc/$f" ]; then
 				decho "Found whatis: $path/$loc/$f"
 #ifdef __APPLE__
-				wlist="$wlist:$path/$loc/$f"
+				wlist="$wlist%$path/$loc/$f"
 #else
 #				wlist="$wlist $path/$loc/$f"
 #endif
@@ -1110,15 +1120,15 @@ search_whatis() {
 
 #ifdef __APPLE__
 	if [ -n "$MANSECT" ]; then
-		sectfilter="$GREP -E "
+		sectfilter=""
 		IFS=:
 		for sect in $MANSECT; do
-			sectfilter="${sectfilter} -e '\\(${sect}\\).*[[:space:]]-[[:space:]]'"
+			sectfilter="${sectfilter}|${sect}"
 		done
 		unset IFS
-		sectfilter="${sectfilter}"
+		sectfilter="\\((${sectfilter#|})\\).*[[:space:]]-[[:space:]]"
 	else
-		sectfilter="$CAT"
+		sectfilter="."
 	fi
 
 	decho "${sectfilter}"
@@ -1133,10 +1143,10 @@ search_whatis() {
 		# Apple systems frequently won't have any directories in manpath
 		# with a whatis database.
 		if [ -n "$wlist" ]; then
-			wlist=${wlist##:}
-			IFS=:
+			wlist=${wlist#%}
+			IFS=%
 			out=$($GREP -Ehi $opt -- "$key" $wlist | \
-			    eval ${sectfilter} | $SED -e 's/\\n/\\\\n/g')
+			    $GREP -E "${sectfilter}" | $SED -e 's/\\n/\\\\n/g')
 			unset IFS
 			if [ -n "$out" ]; then
 				good="$good\n$out"
@@ -1154,11 +1164,12 @@ search_whatis() {
 #endif
 
 #ifdef __APPLE__
-		IFS=:
+		localwlist=${localwlist#%}
+		IFS=%
 		for path in $localwlist; do
 			out=$(/usr/libexec/makewhatis.local "-o /dev/fd/1" \
-			    "$path" | $GREP -Ehi $opt -- "$key" | eval ${sectfilter} | \
-			    $SED -e 's/\\n/\\\\n/g')
+			    "$path" | $GREP -Ehi $opt -- "$key" | \
+			    $GREP -E "${sectfilter}" | $SED -e 's/\\n/\\\\n/g')
 			if [ -n "$out" ]; then
 				good="$good\\n$out"
 				found=1
@@ -1322,7 +1333,7 @@ do_man() {
 	unset IFS
 
 #ifdef __APPLE__
-	if [ $# -gt 1 ]; then
+	if [ $# -gt 1 ] && [ -z "$man_preferred_section" ]; then
 		local base_section
 
 		# See if we match an alternatively valid section; the previous
@@ -1330,22 +1341,8 @@ do_man() {
 		# followed by up to 3 letters.  Naturally, if there's only one
 		# argument then we skip this entirely as it won't be the
 		# section.
-		#
-		# This sed invocation's expressions:
-		# - Eliminate any first arg that doesn't start with a number
-		# - Eliminate any first arg that starts with a number but is
-		#    followed by a non-alphabetic char
-		# - Eliminate any first arg that is followed by more than 3
-		#    alphabetic chars.
-		# - Rewrite what's left to just the leading number
-		#
-		# This somewhat efficiently validates the argument as an
-		# alternatively valid section
-		base_section=$(echo "$1" | $SED -E	\
-		    -e '/^[^0-9]/d'			\
-		    -e '/^[0-9][^[:alpha:]]/d'		\
-		    -e '/^[0-9][[:alpha:]]{4,}/d'	\
-		    -e 's/^([0-9])[[:alpha:]]{1,3}$/\1/')
+		base_section=$(echo "$1" | $SED -nE \
+		    -e 's/^([0-9])[[:alpha:]]{1,3}$/\1/p')
 
 		if [ -n "$base_section" ]; then
 			decho "Detected extended manual section as first arg: $1"
@@ -1476,6 +1473,14 @@ config_local='/usr/local/etc/man.d/*.conf'
 
 # Set noglobbing for now. I don't want spurious globbing.
 set -f
+
+#ifdef __APPLE__
+# man(1) is defined to exhibit default behavior for SIGINT/SIGQUIT; that is,
+# the should terminate with the correct exit codes to reflect that they were
+# terminated by their respective signals.
+trap 'trap - INT; kill -INT $$' INT
+trap 'trap - QUIT; kill -QUIT $$' QUIT
+#endif
 
 case "$0" in
 *apropos)	do_apropos "$@" ;;
