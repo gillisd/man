@@ -704,7 +704,7 @@ man_find_and_display() {
 							# either hit the end or
 							# have a definitive
 							# match.
-							if [ "$foundpage" != "yes" ]; then
+							if [ "$found_page" != "yes" ]; then
 								continue 2
 							fi
 							break 2
